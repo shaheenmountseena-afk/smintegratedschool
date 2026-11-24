@@ -17,6 +17,8 @@ import { faculty as staticFaculty } from '@/data/faculty'
 import { admissionsMedia as staticHomeMedia } from '@/data/homeMedia'
 import { results as staticResults } from '@/data/results'
 import { gallery as staticGallery } from '@/data/gallery'
+import { verifyCsrfOrigin, checkPayloadSize, safeErrorResponse } from '@/lib/security'
+import { seedLimiter } from '@/lib/rate-limit'
 
 export interface SyncSectionReport {
   created: number
@@ -32,21 +34,50 @@ export interface SyncReport {
   gallery: SyncSectionReport
 }
 
+const VALID_TARGETS = ['faculty', 'homeMedia', 'results', 'gallery'] as const
+
 export async function POST(request: Request) {
-  const auth = await verifyAdminRequest(request)
-  if (!auth.success) {
-    return NextResponse.json({ error: auth.error }, { status: auth.status })
-  }
-
-  const { target } = await request.json().catch(() => ({}))
-  const report: SyncReport = {
-    faculty: { created: 0, updated: 0, skipped: 0, failed: 0 },
-    homeMedia: { created: 0, updated: 0, skipped: 0, failed: 0 },
-    results: { created: 0, updated: 0, skipped: 0, failed: 0 },
-    gallery: { created: 0, updated: 0, skipped: 0, failed: 0 },
-  }
-
   try {
+    if (!verifyCsrfOrigin(request)) {
+      return NextResponse.json({ error: 'Forbidden: Invalid request origin' }, { status: 403 })
+    }
+
+    const auth = await verifyAdminRequest(request)
+    if (!auth.success) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status })
+    }
+
+    const rateLimit = seedLimiter.check(auth.user.uid)
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: `Sync operations are rate limited. Please wait ${rateLimit.retryAfterSeconds || 60} seconds before syncing again.`,
+        },
+        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds || 60) } }
+      )
+    }
+
+    if (!checkPayloadSize(request, 10240)) {
+      return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
+    }
+
+    const body = await request.json().catch(() => ({}))
+    const { target } = body
+
+    if (target && !VALID_TARGETS.includes(target)) {
+      return NextResponse.json(
+        { error: `Invalid target '${String(target)}'. Permitted targets: ${VALID_TARGETS.join(', ')}` },
+        { status: 400 }
+      )
+    }
+
+    const report: SyncReport = {
+      faculty: { created: 0, updated: 0, skipped: 0, failed: 0 },
+      homeMedia: { created: 0, updated: 0, skipped: 0, failed: 0 },
+      results: { created: 0, updated: 0, skipped: 0, failed: 0 },
+      gallery: { created: 0, updated: 0, skipped: 0, failed: 0 },
+    }
+
     // 1. Synchronize Faculty
     if (!target || target === 'faculty') {
       const existing = await getAllFaculty()
@@ -106,7 +137,7 @@ export async function POST(request: Request) {
               type: item.type,
               title: item.title,
               url: item.url,
-              thumbnail: item.thumbnail,
+              thumbnail: item.thumbnail || item.url,
               order: currentOrder++,
               isPublished: true,
             },
@@ -131,12 +162,12 @@ export async function POST(request: Request) {
       const existing = await getAllResults()
       const existingIds = new Set(existing.map((e) => e.id))
       const existingSignatures = new Set(
-        existing.map((e) => `${e.year}-${e.name.trim().toLowerCase()}-${e.exam.trim().toLowerCase()}`)
+        existing.map((e) => `${e.year}-${e.name.trim().toLowerCase()}-${e.score.trim()}`)
       )
 
       let currentOrder = existing.length
       for (const item of staticResults) {
-        const signature = `${item.year}-${item.name.trim().toLowerCase()}-${item.exam.trim().toLowerCase()}`
+        const signature = `${item.year}-${item.name.trim().toLowerCase()}-${item.score.trim()}`
         if (existingIds.has(item.id) || existingSignatures.has(signature)) {
           report.results.skipped++
           continue
@@ -174,12 +205,12 @@ export async function POST(request: Request) {
       const existing = await getAllGallery()
       const existingIds = new Set(existing.map((e) => e.id))
       const existingSignatures = new Set(
-        existing.map((e) => `${e.type}-${e.title.trim().toLowerCase()}-${e.url.trim().toLowerCase()}`)
+        existing.map((e) => `${e.type}-${e.category.trim().toLowerCase()}-${e.url.trim()}`)
       )
 
       let currentOrder = existing.length
       for (const item of staticGallery) {
-        const signature = `${item.type}-${item.title.trim().toLowerCase()}-${item.url.trim().toLowerCase()}`
+        const signature = `${item.type}-${item.category.trim().toLowerCase()}-${item.url.trim()}`
         if (existingIds.has(item.id) || existingSignatures.has(signature)) {
           report.gallery.skipped++
           continue
@@ -190,10 +221,10 @@ export async function POST(request: Request) {
             {
               type: item.type,
               category: item.category,
-              year: item.year,
+              year: item.year || new Date().getFullYear(),
               title: item.title,
               url: item.url,
-              thumbnail: item.thumbnail,
+              thumbnail: item.thumbnail || item.url,
               order: currentOrder++,
               isPublished: true,
             },
@@ -213,7 +244,6 @@ export async function POST(request: Request) {
       await markCollectionInitialized(COLLECTIONS.GALLERY)
     }
 
-    // Purge cached pages so fresh data is visible immediately
     revalidatePath('/')
     revalidatePath('/faculty')
     revalidatePath('/results')
@@ -236,10 +266,6 @@ export async function POST(request: Request) {
       report,
     })
   } catch (err: any) {
-    console.error('[Admin Seed] Synchronization error:', err)
-    return NextResponse.json(
-      { error: err?.message || 'Failed to synchronize static content' },
-      { status: 500 }
-    )
+    return safeErrorResponse('Admin Seed POST', err, 'Failed to synchronize static content')
   }
 }

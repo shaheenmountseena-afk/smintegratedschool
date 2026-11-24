@@ -5,10 +5,17 @@ import {
   deleteCloudinaryAsset,
   type CloudinaryResourceType,
 } from '@/lib/cloudinary'
+import { cloudinaryDeleteLimiter } from '@/lib/rate-limit'
+import { verifyCsrfOrigin, checkPayloadSize } from '@/lib/security'
 
 async function handleDelete(request: Request) {
   try {
-    // 1. Authenticate and authorize active administrator
+    // 1. CSRF Verification
+    if (!verifyCsrfOrigin(request)) {
+      return NextResponse.json({ error: 'Forbidden: Invalid request origin' }, { status: 403 })
+    }
+
+    // 2. Authenticate and authorize active administrator
     const authResult = await verifyAdminRequest(request)
     if (!authResult.success) {
       return NextResponse.json(
@@ -17,16 +24,29 @@ async function handleDelete(request: Request) {
       )
     }
 
-    // 2. Abuse Protection: Request size limit (10 KB max)
-    const contentLength = request.headers.get('content-length')
-    if (contentLength && parseInt(contentLength, 10) > 10240) {
+    // 3. Rate Limiting Protection (Max 20 deletions / min per admin UID)
+    const rateLimit = cloudinaryDeleteLimiter.check(authResult.user.uid)
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        {
+          error: `Deletion rate limit reached. Please wait ${rateLimit.retryAfterSeconds || 60} seconds before retrying.`,
+        },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(rateLimit.retryAfterSeconds || 60) },
+        }
+      )
+    }
+
+    // 4. Request size limit (10 KB max)
+    if (!checkPayloadSize(request, 10240)) {
       return NextResponse.json(
         { error: 'Payload too large' },
         { status: 413 }
       )
     }
 
-    // 3. Parse and validate JSON payload
+    // 5. Parse and validate JSON payload
     let body: any
     try {
       body = await request.json()
@@ -48,12 +68,12 @@ async function handleDelete(request: Request) {
 
     const trimmedPublicId = publicId.trim()
 
-    // 4. Validate folder boundary: Prevent arbitrary deletion outside project folders
+    // 6. Validate folder boundary: Strictly prevent arbitrary deletion outside project folders
     if (!isAuthorizedProjectPublicId(trimmedPublicId)) {
       return NextResponse.json(
         {
           error:
-            'Forbidden: Asset deletion is strictly restricted to authorized SHAHEEN project folders (home/posters, home/videos, gallery).',
+            'Forbidden: Asset deletion is strictly restricted to authorized SHAHEEN project folders.',
         },
         { status: 403 }
       )
@@ -71,7 +91,7 @@ async function handleDelete(request: Request) {
       validatedResourceType = resourceType
     }
 
-    // 5. Delete asset securely from Cloudinary
+    // 7. Delete asset securely from Cloudinary
     const deleteResult = await deleteCloudinaryAsset(
       trimmedPublicId,
       validatedResourceType
@@ -94,8 +114,9 @@ async function handleDelete(request: Request) {
       { status: 200 }
     )
   } catch (error: any) {
+    console.error('[Cloudinary Delete] Error:', error?.message)
     return NextResponse.json(
-      { error: error?.message || 'Internal server error while deleting asset' },
+      { error: 'Internal server error while deleting asset' },
       { status: 500 }
     )
   }

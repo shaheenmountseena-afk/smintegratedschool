@@ -2,25 +2,48 @@ import { NextResponse } from 'next/server'
 import { revalidatePath } from 'next/cache'
 import { verifyAdminRequest } from '@/lib/firebase/auth-server'
 import { reorderResultDocs } from '@/lib/firebase/firestore'
+import { verifyCsrfOrigin, checkPayloadSize, validateOrderedIds, safeErrorResponse } from '@/lib/security'
+import { adminMutationLimiter } from '@/lib/rate-limit'
 
 export async function POST(request: Request) {
-  const auth = await verifyAdminRequest(request)
-  if (!auth.success) {
-    return NextResponse.json({ error: auth.error }, { status: auth.status })
+  try {
+    if (!verifyCsrfOrigin(request)) {
+      return NextResponse.json({ error: 'Forbidden: Invalid request origin' }, { status: 403 })
+    }
+
+    const auth = await verifyAdminRequest(request)
+    if (!auth.success) {
+      return NextResponse.json({ error: auth.error }, { status: auth.status })
+    }
+
+    const rateLimit = adminMutationLimiter.check(auth.user.uid)
+    if (!rateLimit.allowed) {
+      return NextResponse.json(
+        { error: `Too many requests. Please wait ${rateLimit.retryAfterSeconds || 60} seconds.` },
+        { status: 429, headers: { 'Retry-After': String(rateLimit.retryAfterSeconds || 60) } }
+      )
+    }
+
+    if (!checkPayloadSize(request, 51200)) {
+      return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
+    }
+
+    const body = await request.json().catch(() => ({}))
+    const validation = validateOrderedIds(body?.orderedIds, 200)
+    if (!validation.valid) {
+      return NextResponse.json({ error: validation.error }, { status: 400 })
+    }
+
+    const success = await reorderResultDocs(validation.ids)
+    if (!success) {
+      return NextResponse.json({ error: 'Failed to reorder results' }, { status: 500 })
+    }
+
+    revalidatePath('/results')
+    revalidatePath('/gallery')
+
+    return NextResponse.json({ success: true, message: 'Result order updated successfully' })
+  } catch (err: any) {
+    return safeErrorResponse('Admin Results Reorder', err, 'Failed to update result order')
   }
-
-  const { orderedIds } = await request.json().catch(() => ({}))
-  if (!Array.isArray(orderedIds) || orderedIds.length === 0) {
-    return NextResponse.json({ error: 'orderedIds must be a non-empty array of IDs' }, { status: 400 })
-  }
-
-  const success = await reorderResultDocs(orderedIds)
-  if (!success) {
-    return NextResponse.json({ error: 'Failed to reorder results' }, { status: 500 })
-  }
-
-  revalidatePath('/results')
-  revalidatePath('/gallery')
-
-  return NextResponse.json({ success: true, message: 'Results order updated successfully' })
 }

@@ -8,7 +8,7 @@ service cloud.firestore {
     // Server-Authoritative Architecture:
     // All database reads, writes, and admin operations are executed through
     // the trusted Next.js Server-Side Firebase Admin SDK.
-    // Direct client-side access is strictly denied.
+    // Direct client-side access is strictly denied across all collections.
     // ========================================================================
 
     // 1. Admins Collection: Strictly inaccessible from Client SDK.
@@ -24,21 +24,32 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // 3. Home Media Collection: Direct client writes strictly denied.
-    // Homepage posters and promo videos are managed exclusively through the server.
+    // 3. Faculty Collection: Direct client reads & writes strictly denied.
+    match /faculty/{facultyId} {
+      allow read, write: if false;
+    }
+
+    // 4. Home Media Collection: Direct client reads & writes strictly denied.
     match /homeMedia/{mediaId} {
-      allow read: if false; // Fetched server-side via Admin SDK
-      allow write: if false;
+      allow read, write: if false;
     }
 
-    // 4. Gallery Collection: Direct client writes strictly denied.
-    // Photos, posters, and videos are managed and served server-side.
+    // 5. Results Collection: Direct client reads & writes strictly denied.
+    match /results/{resultId} {
+      allow read, write: if false;
+    }
+
+    // 6. Gallery Collection: Direct client reads & writes strictly denied.
     match /gallery/{itemId} {
-      allow read: if false; // Fetched server-side via Admin SDK
-      allow write: if false;
+      allow read, write: if false;
     }
 
-    // Default Catch-All: Deny all direct client access
+    // 7. Metadata Collection: Direct client reads & writes strictly denied.
+    match /metadata/{metaId} {
+      allow read, write: if false;
+    }
+
+    // Default Catch-All: Deny all direct client access across all paths
     match /{document=**} {
       allow read, write: if false;
     }

@@ -4,10 +4,17 @@ import {
   validateUploadRequest,
   generateUploadSignature,
 } from '@/lib/cloudinary'
+import { cloudinarySignLimiter } from '@/lib/rate-limit'
+import { verifyCsrfOrigin, checkPayloadSize } from '@/lib/security'
 
 export async function POST(request: Request) {
   try {
-    // 1. Authenticate and authorize active administrator
+    // 1. CSRF Verification
+    if (!verifyCsrfOrigin(request)) {
+      return NextResponse.json({ error: 'Forbidden: Invalid request origin' }, { status: 403 })
+    }
+
+    // 2. Authenticate and authorize active administrator
     const authResult = await verifyAdminRequest(request)
     if (!authResult.success) {
       return NextResponse.json(
@@ -16,16 +23,26 @@ export async function POST(request: Request) {
       )
     }
 
-    // 2. Abuse Protection: Request size limit (10 KB max for metadata)
-    const contentLength = request.headers.get('content-length')
-    if (contentLength && parseInt(contentLength, 10) > 10240) {
+    // 3. Rate Limiting Protection (Max 30 signatures / min per admin UID)
+    const rateLimit = cloudinarySignLimiter.check(authResult.user.uid)
+    if (!rateLimit.allowed) {
       return NextResponse.json(
-        { error: 'Payload too large' },
-        { status: 413 }
+        {
+          error: `Upload rate limit exceeded. Please wait ${rateLimit.retryAfterSeconds || 60} seconds before requesting more upload slots.`,
+        },
+        {
+          status: 429,
+          headers: { 'Retry-After': String(rateLimit.retryAfterSeconds || 60) },
+        }
       )
     }
 
-    // 3. Parse and validate JSON payload
+    // 4. Request size limit (10 KB max for metadata)
+    if (!checkPayloadSize(request, 10240)) {
+      return NextResponse.json({ error: 'Payload too large' }, { status: 413 })
+    }
+
+    // 5. Parse and validate JSON payload
     let body: any
     try {
       body = await request.json()
@@ -45,7 +62,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // 4. Validate folder restrictions and resource type policies
+    // 6. Validate folder restrictions and resource type policies
     const validation = validateUploadRequest(folder.trim(), resourceType)
     if (!validation.valid) {
       return NextResponse.json(
@@ -54,7 +71,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // 5. Generate cryptographic upload signature
+    // 7. Generate cryptographic upload signature (Secret never touches client)
     const signatureResult = generateUploadSignature(
       validation.folder,
       validation.resourceType
@@ -67,7 +84,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // 6. Return secure signed parameters (Secret is NEVER included)
+    // 8. Return secure signed parameters
     return NextResponse.json(
       {
         success: true,
@@ -76,8 +93,9 @@ export async function POST(request: Request) {
       { status: 200 }
     )
   } catch (error: any) {
+    console.error('[Cloudinary Sign POST] Error:', error?.message)
     return NextResponse.json(
-      { error: error?.message || 'Internal server error while generating upload signature' },
+      { error: 'Internal server error while generating upload signature' },
       { status: 500 }
     )
   }
