@@ -42,7 +42,7 @@ export const heroSlides: HeroSlide[] = [
   },
   {
     id: 'slide-3',
-    image: '/images/lab.jpeg',
+    image: '/images/Lab.jpeg',
     alt: 'Students conducting an experiment in the science lab (dummy photo)',
     eyebrow: 'Hands-on science',
     title: 'Concepts you can see and touch',
