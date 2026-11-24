@@ -1,0 +1,46 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ========================================================================
+    // SHAHEEN – MOUNT SEENA FIRESTORE SECURITY RULES
+    // Server-Authoritative Architecture:
+    // All database reads, writes, and admin operations are executed through
+    // the trusted Next.js Server-Side Firebase Admin SDK.
+    // Direct client-side access is strictly denied.
+    // ========================================================================
+
+    // 1. Admins Collection: Strictly inaccessible from Client SDK.
+    // Only Firebase Admin SDK on the server can read or modify administrator records.
+    match /admins/{adminId} {
+      allow read, write: if false;
+    }
+
+    // 2. Enquiries Collection: Client SDK direct read/write strictly denied.
+    // Enquiries are validated and inserted through the Next.js API route (/api/enquiry)
+    // using Firebase Admin SDK. Prevents scraping of student leads and spam floods.
+    match /enquiries/{enquiryId} {
+      allow read, write: if false;
+    }
+
+    // 3. Home Media Collection: Direct client writes strictly denied.
+    // Homepage posters and promo videos are managed exclusively through the server.
+    match /homeMedia/{mediaId} {
+      allow read: if false; // Fetched server-side via Admin SDK
+      allow write: if false;
+    }
+
+    // 4. Gallery Collection: Direct client writes strictly denied.
+    // Photos, posters, and videos are managed and served server-side.
+    match /gallery/{itemId} {
+      allow read: if false; // Fetched server-side via Admin SDK
+      allow write: if false;
+    }
+
+    // Default Catch-All: Deny all direct client access
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
