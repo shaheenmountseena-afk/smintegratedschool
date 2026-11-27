@@ -3,8 +3,11 @@ import { revalidatePath } from 'next/cache'
 import { verifyAdminRequest } from '@/lib/firebase/auth-server'
 import { getAllHomeMedia, createHomeMediaDoc, markCollectionInitialized, COLLECTIONS } from '@/lib/firebase/firestore'
 import { isAuthorizedProjectPublicId } from '@/lib/cloudinary'
+import { getDefaultVideoThumbnail } from '@/lib/media-utils'
 import { verifyCsrfOrigin, checkPayloadSize, cleanString, isSafeUrl, safeErrorResponse } from '@/lib/security'
 import { adminMutationLimiter } from '@/lib/rate-limit'
+
+const VALID_TYPES = new Set(['video', 'poster', 'photo'])
 
 export async function GET(request: Request) {
   try {
@@ -44,47 +47,149 @@ export async function POST(request: Request) {
     }
 
     const body = await request.json().catch(() => ({}))
-    const { type, title, caption, url, thumbnail, cloudinaryPublicId, isPublished = true } = body
+    const {
+      type: rawType,
+      mediaType: rawMediaType,
+      title,
+      caption,
+      description,
+      url: rawUrl,
+      mediaUrl: rawMediaUrl,
+      thumbnail: rawThumb,
+      thumbnailUrl: rawThumbUrl,
+      cloudinaryPublicId,
+      thumbnailPublicId,
+      ctaText,
+      ctaLink,
+      order: rawOrder,
+      displayOrder: rawDisplayOrder,
+      isPublished = true,
+    } = body
 
-    if (type !== 'video' && type !== 'poster') {
-      return NextResponse.json({ error: 'Type must be "video" or "poster"' }, { status: 400 })
+    const resolvedType =
+      rawType ??
+      (rawMediaType === 'video' ? 'video' : rawMediaType === 'image' ? 'poster' : undefined)
+
+    if (!resolvedType || !VALID_TYPES.has(resolvedType)) {
+      return NextResponse.json(
+        { error: 'Type must be "poster", "photo", or "video"' },
+        { status: 400 }
+      )
     }
+
+    const typedType = resolvedType as 'video' | 'poster' | 'photo'
+    const resolvedMediaType: 'image' | 'video' = typedType === 'video' ? 'video' : 'image'
 
     const cleanTitle = cleanString(title, 1, 200)
     if (!cleanTitle) {
       return NextResponse.json({ error: 'Title is required (1–200 characters)' }, { status: 400 })
     }
 
-    if (!url || !isSafeUrl(url)) {
-      return NextResponse.json({ error: 'Valid URL is required (must start with https://, http://, or /)' }, { status: 400 })
+    const rawEffectiveUrl = rawUrl ?? rawMediaUrl
+    if (!rawEffectiveUrl || !isSafeUrl(rawEffectiveUrl)) {
+      return NextResponse.json(
+        { error: 'Valid Media URL is required (must start with https://, http://, or /)' },
+        { status: 400 }
+      )
     }
+    const cleanUrl = String(rawEffectiveUrl).trim()
 
-    if (thumbnail && !isSafeUrl(thumbnail)) {
+    const rawEffectiveThumb = rawThumb ?? rawThumbUrl
+    if (rawEffectiveThumb && !isSafeUrl(rawEffectiveThumb)) {
       return NextResponse.json({ error: 'Invalid thumbnail URL' }, { status: 400 })
     }
+
+    const derivedThumb =
+      rawEffectiveThumb && typeof rawEffectiveThumb === 'string' && rawEffectiveThumb.trim()
+        ? rawEffectiveThumb.trim()
+        : resolvedMediaType === 'video'
+          ? getDefaultVideoThumbnail(cleanUrl) || cleanUrl
+          : cleanUrl
 
     if (cloudinaryPublicId && typeof cloudinaryPublicId === 'string' && cloudinaryPublicId.trim()) {
       const trimmedPid = cloudinaryPublicId.trim()
       if (!isAuthorizedProjectPublicId(trimmedPid)) {
-        return NextResponse.json({ error: 'Invalid or unauthorized Cloudinary asset publicId' }, { status: 400 })
+        return NextResponse.json(
+          { error: 'Invalid or unauthorized Cloudinary asset publicId' },
+          { status: 400 }
+        )
       }
     }
 
-    const cleanCaption = caption ? cleanString(caption, 0, 500) : undefined
+    if (thumbnailPublicId && typeof thumbnailPublicId === 'string' && thumbnailPublicId.trim()) {
+      const trimmedThumbPid = thumbnailPublicId.trim()
+      if (!isAuthorizedProjectPublicId(trimmedThumbPid)) {
+        return NextResponse.json(
+          { error: 'Invalid or unauthorized Cloudinary thumbnail publicId' },
+          { status: 400 }
+        )
+      }
+    }
+
+    const rawDesc = description !== undefined ? description : caption
+    let cleanDesc: string | undefined
+    if (rawDesc !== undefined && rawDesc !== null && String(rawDesc).trim() !== '') {
+      const validatedDesc = cleanString(rawDesc, 1, 500)
+      if (!validatedDesc) {
+        return NextResponse.json(
+          { error: 'Description must be at most 500 characters' },
+          { status: 400 }
+        )
+      }
+      cleanDesc = validatedDesc
+    }
+
+    const hasCtaText = typeof ctaText === 'string' && ctaText.trim().length > 0
+    const hasCtaLink = typeof ctaLink === 'string' && ctaLink.trim().length > 0
+    if (hasCtaText !== hasCtaLink) {
+      return NextResponse.json(
+        { error: 'Both CTA button text and CTA destination link are required when adding a CTA button' },
+        { status: 400 }
+      )
+    }
+
+    let cleanCtaText: string | undefined
+    let cleanCtaLink: string | undefined
+    if (hasCtaText && hasCtaLink) {
+      const validatedCta = cleanString(ctaText, 1, 60)
+      if (!validatedCta) {
+        return NextResponse.json({ error: 'CTA text must be 1–60 characters' }, { status: 400 })
+      }
+      if (!isSafeUrl(ctaLink)) {
+        return NextResponse.json(
+          { error: 'CTA destination link must be a valid https://, http://, or / path' },
+          { status: 400 }
+        )
+      }
+      cleanCtaText = validatedCta
+      cleanCtaLink = ctaLink.trim()
+    }
 
     const existing = await getAllHomeMedia()
-    const order = existing.length
+    const rawRequestedOrder = rawOrder !== undefined ? rawOrder : rawDisplayOrder
+    const order =
+      rawRequestedOrder !== undefined && rawRequestedOrder !== '' && !isNaN(Number(rawRequestedOrder))
+        ? Math.max(0, Math.floor(Number(rawRequestedOrder)))
+        : existing.length
 
     const doc = await createHomeMediaDoc({
-      type,
+      type: typedType,
+      mediaType: resolvedMediaType,
       title: cleanTitle,
-      ...(cleanCaption ? { caption: cleanCaption } : {}),
-      url: url.trim(),
-      thumbnail: thumbnail && typeof thumbnail === 'string' && thumbnail.trim() ? thumbnail.trim() : url.trim(),
+      ...(cleanDesc ? { caption: cleanDesc, description: cleanDesc } : {}),
+      url: cleanUrl,
+      mediaUrl: cleanUrl,
+      thumbnail: derivedThumb,
+      thumbnailUrl: derivedThumb,
       ...(cloudinaryPublicId && typeof cloudinaryPublicId === 'string' && cloudinaryPublicId.trim()
         ? { cloudinaryPublicId: cloudinaryPublicId.trim() }
         : {}),
+      ...(thumbnailPublicId && typeof thumbnailPublicId === 'string' && thumbnailPublicId.trim()
+        ? { thumbnailPublicId: thumbnailPublicId.trim() }
+        : {}),
+      ...(cleanCtaText ? { ctaText: cleanCtaText, ctaLink: cleanCtaLink } : {}),
       order,
+      displayOrder: order,
       isPublished: Boolean(isPublished),
     })
 

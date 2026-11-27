@@ -64,19 +64,29 @@ export async function getPublicFaculty(): Promise<FacultyMember[]> {
 }
 
 /**
- * Returns active published homepage media (video and posters).
+ * Returns active published homepage media (posters, promotional videos, and campus photographs).
  */
 export async function getPublicHomeMedia(): Promise<MediaItem[]> {
   try {
     const docs = await getPublishedHomeMedia()
     if (docs && docs.length > 0) {
-      return docs.map((d) => ({
-        id: d.id,
-        type: d.type,
-        title: d.title,
-        url: d.url,
-        thumbnail: d.thumbnail,
-      }))
+      return docs.map((d) => {
+        const mediaUrl = d.url || d.mediaUrl || ''
+        const resolvedType = d.type || (d.mediaType === 'video' ? 'video' : 'poster')
+        const resolvedMediaType = d.mediaType || (resolvedType === 'video' ? 'video' : 'image')
+        return {
+          id: d.id,
+          type: resolvedType,
+          mediaType: resolvedMediaType,
+          title: d.title,
+          description: d.description || d.caption || undefined,
+          url: mediaUrl,
+          thumbnail: d.thumbnail || d.thumbnailUrl || mediaUrl,
+          ctaText: d.ctaText || undefined,
+          ctaLink: d.ctaLink || undefined,
+          order: d.order ?? d.displayOrder ?? 0,
+        }
+      })
     }
 
     const isInit = await isCollectionInitialized(COLLECTIONS.HOME_MEDIA)

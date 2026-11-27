@@ -2,29 +2,15 @@
 
 import Image from 'next/image'
 import { Play } from 'lucide-react'
+import { getVideoEmbedUrl, isDirectVideoUrl, optimizeCloudinaryUrl } from '@/lib/media-utils'
 import { Modal } from './modal'
 
 export type Video = { title: string; url: string; thumbnail: string }
 
-function getEmbedUrl(rawUrl: string): string {
-  if (!rawUrl) return ''
-  const trimmed = rawUrl.trim()
-  const ytMatch = trimmed.match(/(?:youtube\.com\/(?:watch\?v=|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/)
-  if (ytMatch) {
-    return `https://www.youtube-nocookie.com/embed/${ytMatch[1]}`
-  }
-  return trimmed
-}
-
-function isDirectVideo(rawUrl: string): boolean {
-  if (!rawUrl) return false
-  const clean = rawUrl.split('?')[0].toLowerCase()
-  return clean.endsWith('.mp4') || clean.endsWith('.webm') || clean.endsWith('.ogg')
-}
-
 export function VideoModal({ video, onClose }: { video: Video | null; onClose: () => void }) {
-  const isDirect = video?.url ? isDirectVideo(video.url) : false
-  const embedUrl = video?.url ? getEmbedUrl(video.url) : ''
+  const isDirect = video?.url ? isDirectVideoUrl(video.url) : false
+  const embedUrl = video?.url ? getVideoEmbedUrl(video.url) : ''
+  const videoSrc = video?.url && isDirect ? optimizeCloudinaryUrl(video.url, { resourceType: 'video' }) : video?.url || ''
 
   return (
     <Modal open={!!video} onClose={onClose} label={video ? `Video: ${video.title}` : 'Video player'}>
@@ -34,7 +20,7 @@ export function VideoModal({ video, onClose }: { video: Video | null; onClose: (
             {video.url ? (
               isDirect ? (
                 <video
-                  src={video.url}
+                  src={videoSrc}
                   title={video.title}
                   controls
                   autoPlay

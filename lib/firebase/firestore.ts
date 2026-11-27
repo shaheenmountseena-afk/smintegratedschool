@@ -32,13 +32,21 @@ export interface FacultyDoc {
 
 export interface HomeMediaDoc {
   id: string
-  type: 'video' | 'poster'
+  type: 'video' | 'poster' | 'photo'
+  mediaType?: 'image' | 'video'
   title: string
   caption?: string
+  description?: string
   url: string
+  mediaUrl?: string
   thumbnail: string
+  thumbnailUrl?: string
   cloudinaryPublicId?: string
+  thumbnailPublicId?: string
+  ctaText?: string
+  ctaLink?: string
   order: number
+  displayOrder?: number
   isPublished: boolean
   createdAt: string
   updatedAt?: string
@@ -293,7 +301,7 @@ export async function getAllHomeMedia(): Promise<HomeMediaDoc[]> {
   try {
     const snapshot = await collection.get()
     const docs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as HomeMediaDoc)
-    return docs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    return docs.sort((a, b) => (a.order ?? a.displayOrder ?? 0) - (b.order ?? b.displayOrder ?? 0))
   } catch (error) {
     console.error('[Firestore] Failed to query all home media:', error)
     return []
@@ -307,7 +315,7 @@ export async function getPublishedHomeMedia(): Promise<HomeMediaDoc[]> {
   try {
     const snapshot = await collection.where('isPublished', '==', true).get()
     const docs = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as HomeMediaDoc)
-    return docs.sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+    return docs.sort((a, b) => (a.order ?? a.displayOrder ?? 0) - (b.order ?? b.displayOrder ?? 0))
   } catch (error) {
     console.error('[Firestore] Failed to query published home media:', error)
     return []
@@ -372,7 +380,11 @@ export async function reorderHomeMediaDocs(orderedIds: string[]): Promise<boolea
   const collection = db.collection(COLLECTIONS.HOME_MEDIA)
 
   orderedIds.forEach((id, index) => {
-    batch.update(collection.doc(id), { order: index, updatedAt: new Date().toISOString() })
+    batch.update(collection.doc(id), {
+      order: index,
+      displayOrder: index,
+      updatedAt: new Date().toISOString(),
+    })
   })
 
   await batch.commit()

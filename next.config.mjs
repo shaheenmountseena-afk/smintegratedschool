@@ -5,7 +5,7 @@ const cspHeader = [
   "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://*.firebaseapp.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "font-src 'self' https://fonts.gstatic.com data:",
-  "img-src 'self' data: blob: https://res.cloudinary.com https://*.cloudinary.com https://images.unsplash.com https://*.googleusercontent.com",
+  "img-src 'self' data: blob: https://res.cloudinary.com https://*.cloudinary.com https://images.unsplash.com https://*.googleusercontent.com https://img.youtube.com https://i.ytimg.com",
   "media-src 'self' blob: https://res.cloudinary.com https://*.cloudinary.com",
   "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://identitytoolkit.googleapis.com https://securetoken.googleapis.com https://api.cloudinary.com https://res.cloudinary.com",
   "frame-src 'self' https://*.firebaseapp.com https://www.google.com https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com",

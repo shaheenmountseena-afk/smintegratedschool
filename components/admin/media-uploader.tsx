@@ -1,10 +1,11 @@
 'use client'
 
-import React, { useState, useRef } from 'react'
+import React, { useEffect, useState, useRef } from 'react'
 import Image from 'next/image'
-import { UploadCloud, CheckCircle2, AlertCircle, Loader2, X, Film, Image as ImageIcon } from 'lucide-react'
+import { UploadCloud, AlertCircle, Loader2, X, Film } from 'lucide-react'
 import { uploadToCloudinary } from '@/lib/cloudinary-upload-client'
 import { getAdminIdToken } from '@/lib/firebase/auth-client'
+import { isDirectVideoUrl } from '@/lib/media-utils'
 import type { AllowedCloudinaryFolder, CloudinaryResourceType } from '@/lib/cloudinary'
 
 interface MediaUploaderProps {
@@ -32,6 +33,10 @@ export function MediaUploader({
   const [error, setError] = useState<string | null>(null)
   const [preview, setPreview] = useState<string | null>(currentThumbnail || currentUrl || null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => {
+    setPreview(currentThumbnail || currentUrl || null)
+  }, [currentThumbnail, currentUrl])
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
@@ -85,7 +90,7 @@ export function MediaUploader({
 
       {preview ? (
         <div className="relative group overflow-hidden rounded-xl border border-slate-200 bg-slate-50 flex items-center justify-center p-2 min-h-[140px] max-h-[220px]">
-          {isVideo && preview.endsWith('.mp4') ? (
+          {isVideo && isDirectVideoUrl(preview) ? (
             <video
               src={preview}
               controls

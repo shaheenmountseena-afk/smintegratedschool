@@ -3,13 +3,20 @@
  * TODO: replace these arrays with API calls once the admin panel is ready.
  */
 
+export type HomeMediaType = 'video' | 'poster' | 'photo'
+
 export type MediaItem = {
   id: string
-  type: 'video' | 'poster'
+  type: HomeMediaType
+  mediaType?: 'image' | 'video'
   title: string
-  /** For videos: a YouTube embed URL. For posters: the full-size image URL. */
+  description?: string
+  /** For videos: a YouTube embed URL or Cloudinary video URL. For posters/photos: the full-size image URL. */
   url: string
   thumbnail: string
+  ctaText?: string
+  ctaLink?: string
+  order?: number
 }
 
 export type HeroSlide = {
